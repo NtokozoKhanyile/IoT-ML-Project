@@ -6,4 +6,4 @@ matplotlib>=3.5.0
 plotly>=5.0.0
 prophet==1.1.6
 holidays==0.70
-pmdarima==2.0.4
+pmdarima>=2.0.5
