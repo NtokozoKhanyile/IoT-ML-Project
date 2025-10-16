@@ -1,9 +1,9 @@
 streamlit>=1.28.0
 pandas>=1.5.0
-numpy>=1.21.0
+numpy==1.24.3
 scikit-learn>=1.0.0
 matplotlib>=3.5.0
 plotly>=5.0.0
 prophet==1.1.6
 holidays==0.70
-pmdarima>=2.0.5
+statsmodels>=0.14.0
