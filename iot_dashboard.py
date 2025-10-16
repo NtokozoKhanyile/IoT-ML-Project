@@ -284,6 +284,21 @@ st.markdown("""
         margin: 0.3rem 0;
         border-left: 4px solid #FF9800;
     }
+    
+    /* Prevent chart flickering */
+    .stPlotlyChart {
+        transition: opacity 0.3s ease;
+    }
+    
+    /* Smooth transitions for metrics */
+    .stMetric {
+        transition: all 0.3s ease;
+    }
+    
+    /* Optimize container rendering */
+    .stContainer {
+        will-change: transform;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -659,7 +674,7 @@ def load_external_data(file):
         return None
 
 # -----------------------
-# DASHBOARD CLASS WITH SMOOTH UPDATES
+# OPTIMIZED DASHBOARD CLASS WITH SMOOTH UPDATES
 # -----------------------
 class PredictiveMaintenanceDashboard:
     def __init__(self):
@@ -688,7 +703,9 @@ class PredictiveMaintenanceDashboard:
             'history_data': [],
             'alert_history': [],
             'selected_machine': 'Machine_01',
-            'probability_history': []  # Track probability over time
+            'probability_history': [],
+            'last_chart_update': 0,
+            'chart_data_version': 0
         }
         
         for key, value in defaults.items():
@@ -716,6 +733,7 @@ class PredictiveMaintenanceDashboard:
                         st.session_state.data_points = 0
                         st.session_state.history_data = []
                         st.session_state.probability_history = []
+                        st.session_state.chart_data_version += 1
                         st.sidebar.success(f"Loaded {len(st.session_state.dataset)} records")
                     else:
                         st.sidebar.error("Failed to load sample data")
@@ -737,6 +755,7 @@ class PredictiveMaintenanceDashboard:
                         st.session_state.data_points = 0
                         st.session_state.history_data = []
                         st.session_state.probability_history = []
+                        st.session_state.chart_data_version += 1
                         st.sidebar.success(f"Loaded {len(st.session_state.dataset)} records")
                     else:
                         st.sidebar.error("Failed to process uploaded file")
@@ -789,42 +808,43 @@ class PredictiveMaintenanceDashboard:
         time_since_update = current_time - st.session_state.last_probability_update
         return time_since_update.total_seconds() >= 120  # 2 minutes
 
-    def update_data(self):
-        """Update the current data from dataset with time-based probability updates"""
+    def update_data_optimized(self):
+        """Optimized data update that only refreshes necessary components"""
         if (st.session_state.simulation_started and 
             not st.session_state.simulation_paused and 
             st.session_state.dataset_loaded and 
             st.session_state.dataset is not None):
             
-            # Get next data point from dataset
+            # Get next data point
             if st.session_state.current_machine_index < len(st.session_state.dataset):
                 current_data = st.session_state.dataset.iloc[st.session_state.current_machine_index].to_dict()
                 current_data['timestamp'] = datetime.now()
                 
+                # Update only the data, not the entire session state
                 st.session_state.current_data = current_data
                 st.session_state.current_machine_index += 1
                 st.session_state.data_points += 1
                 st.session_state.last_update = datetime.now()
                 
-                # Add to history
+                # Add to history (limit size for performance)
                 st.session_state.history_data.append(current_data)
-                if len(st.session_state.history_data) > 100:
-                    st.session_state.history_data = st.session_state.history_data[-100:]
+                if len(st.session_state.history_data) > 50:  # Reduced from 100
+                    st.session_state.history_data = st.session_state.history_data[-50:]
                 
-                # Update failure probability only every 2 minutes
+                # Update probability less frequently
                 if self.should_update_probability():
                     prob, explanations, maintenance_actions = predict_failure_prob_from_sample(
                         current_data, self.model, self.scaler, st.session_state.history_data
                     )
-                    st.session_state.failure_prob = prob * 100  # Convert to percentage
+                    st.session_state.failure_prob = prob * 100
                     st.session_state.failure_explanations = explanations
                     st.session_state.maintenance_actions = maintenance_actions
                     st.session_state.last_probability_update = datetime.now()
                     
                     # Track probability history
                     st.session_state.probability_history.append(prob)
-                    if len(st.session_state.probability_history) > 50:
-                        st.session_state.probability_history = st.session_state.probability_history[-50:]
+                    if len(st.session_state.probability_history) > 30:  # Reduced from 50
+                        st.session_state.probability_history = st.session_state.probability_history[-30:]
                     
                     # Schedule maintenance if needed (with consistency check)
                     if should_trigger_maintenance(prob, st.session_state.probability_history):
@@ -845,133 +865,149 @@ class PredictiveMaintenanceDashboard:
                             severity.lower(),
                             current_data
                         )
+                
+                # Increment chart data version to trigger updates
+                st.session_state.chart_data_version += 1
 
-    def render_maintenance_section(self):
+    def render_maintenance_section_optimized(self):
         """Render maintenance scheduling and alerts section"""
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-        st.subheader("Maintenance Management")
-        
-        # Show next probability update time
-        if st.session_state.simulation_started and st.session_state.last_probability_update:
-            next_update = st.session_state.last_probability_update + timedelta(seconds=120)
-            time_remaining = (next_update - datetime.now()).total_seconds()
-            if time_remaining > 0:
-                st.caption(f"Next probability update in: {int(time_remaining)} seconds")
-        
-        # Current maintenance actions
-        if st.session_state.maintenance_actions:
-            st.markdown("### Recommended Actions")
-            for i, action in enumerate(st.session_state.maintenance_actions):
-                st.markdown(f'<div class="action-item">{action}</div>', unsafe_allow_html=True)
-        
-        # Maintenance schedule
-        if st.session_state.maintenance_schedule:
-            st.markdown("### Maintenance Schedule")
-            for schedule in st.session_state.maintenance_schedule[-5:]:  # Show last 5
-                priority_color = {
-                    'EMERGENCY': '#F44336',
-                    'HIGH': '#FF9800',
-                    'MEDIUM': '#FFC107',
-                    'LOW': '#4CAF50'
-                }.get(schedule['priority'], '#9E9E9E')
-                
-                st.markdown(f'''
-                <div class="maintenance-schedule">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <strong>{schedule['machine_id']}</strong>
-                        <span style="background: {priority_color}; color: white; padding: 0.2rem 0.5rem; border-radius: 12px; font-size: 0.8rem;">
-                            {schedule['priority']}
-                        </span>
-                    </div>
-                    <div>Due: {schedule['due_date'].strftime('%Y-%m-%d %H:%M')}</div>
-                    <div>Failure Risk: {schedule['failure_probability']:.1%}</div>
-                    <div style="margin-top: 0.5rem;">
-                        <strong>Actions:</strong>
-                        <ul style="margin: 0.2rem 0;">
-                            {''.join([f'<li>{action}</li>' for action in schedule['actions'][:2]])}
-                        </ul>
-                    </div>
-                </div>
-                ''', unsafe_allow_html=True)
-        else:
-            st.info("No maintenance scheduled. All systems operating normally.")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    def render_alert_history(self):
-        """Render alert history"""
-        if st.session_state.alert_history:
+        with st.container():
             st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.subheader("Alert History")
+            st.subheader("Maintenance Management")
             
-            for alert in st.session_state.alert_history[-10:]:  # Show last 10 alerts
-                severity_color = {
-                    'critical': '#F44336',
-                    'warning': '#FF9800',
-                    'info': '#2196F3'
-                }.get(alert['severity'], '#9E9E9E')
-                
-                st.markdown(f'''
-                <div style="background: rgba{(*tuple(int(severity_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)), 0.1)}; 
-                            border-left: 4px solid {severity_color}; 
-                            padding: 0.8rem; margin: 0.5rem 0; border-radius: 8px;">
-                    <div style="display: flex; justify-content: space-between;">
-                        <strong>{alert['type']}</strong>
-                        <small>{alert['timestamp'].strftime('%H:%M:%S')}</small>
+            # Show next probability update time
+            if st.session_state.simulation_started and st.session_state.last_probability_update:
+                next_update = st.session_state.last_probability_update + timedelta(seconds=120)
+                time_remaining = (next_update - datetime.now()).total_seconds()
+                if time_remaining > 0:
+                    st.caption(f"Next probability update in: {int(time_remaining)} seconds")
+            
+            # Current maintenance actions
+            if st.session_state.maintenance_actions:
+                st.markdown("### Recommended Actions")
+                for i, action in enumerate(st.session_state.maintenance_actions):
+                    st.markdown(f'<div class="action-item">{action}</div>', unsafe_allow_html=True)
+            
+            # Maintenance schedule
+            if st.session_state.maintenance_schedule:
+                st.markdown("### Maintenance Schedule")
+                for schedule in st.session_state.maintenance_schedule[-5:]:  # Show last 5
+                    priority_color = {
+                        'EMERGENCY': '#F44336',
+                        'HIGH': '#FF9800',
+                        'MEDIUM': '#FFC107',
+                        'LOW': '#4CAF50'
+                    }.get(schedule['priority'], '#9E9E9E')
+                    
+                    st.markdown(f'''
+                    <div class="maintenance-schedule">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <strong>{schedule['machine_id']}</strong>
+                            <span style="background: {priority_color}; color: white; padding: 0.2rem 0.5rem; border-radius: 12px; font-size: 0.8rem;">
+                                {schedule['priority']}
+                            </span>
+                        </div>
+                        <div>Due: {schedule['due_date'].strftime('%Y-%m-%d %H:%M')}</div>
+                        <div>Failure Risk: {schedule['failure_probability']:.1%}</div>
+                        <div style="margin-top: 0.5rem;">
+                            <strong>Actions:</strong>
+                            <ul style="margin: 0.2rem 0;">
+                                {''.join([f'<li>{action}</li>' for action in schedule['actions'][:2]])}
+                            </ul>
+                        </div>
                     </div>
-                    <div>{alert['message']}</div>
-                </div>
-                ''', unsafe_allow_html=True)
+                    ''', unsafe_allow_html=True)
+            else:
+                st.info("No maintenance scheduled. All systems operating normally.")
             
             st.markdown('</div>', unsafe_allow_html=True)
 
-    def create_sensor_gauges(self):
-        """Create sensor gauge charts"""
+    def render_alert_history_optimized(self):
+        """Render alert history"""
+        if st.session_state.alert_history:
+            with st.container():
+                st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+                st.subheader("Alert History")
+                
+                for alert in st.session_state.alert_history[-10:]:  # Show last 10 alerts
+                    severity_color = {
+                        'critical': '#F44336',
+                        'warning': '#FF9800',
+                        'info': '#2196F3'
+                    }.get(alert['severity'], '#9E9E9E')
+                    
+                    st.markdown(f'''
+                    <div style="background: rgba{(*tuple(int(severity_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)), 0.1)}; 
+                                border-left: 4px solid {severity_color}; 
+                                padding: 0.8rem; margin: 0.5rem 0; border-radius: 8px;">
+                        <div style="display: flex; justify-content: space-between;">
+                            <strong>{alert['type']}</strong>
+                            <small>{alert['timestamp'].strftime('%H:%M:%S')}</small>
+                        </div>
+                        <div>{alert['message']}</div>
+                    </div>
+                    ''', unsafe_allow_html=True)
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    def create_sensor_gauges_optimized(self):
+        """Create sensor gauge charts with persistent keys"""
         if st.session_state.current_data is None:
             return
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
+            temp_value = st.session_state.current_data.get('Air temperature [K]', 300) - 273.15
             temp_gauge = self.create_live_sensor_gauge(
-                st.session_state.current_data.get('Air temperature [K]', 300) - 273.15,
-                "Air Temp (°C)",
-                min_val=20,
-                max_val=50,
-                unit="°C"
+                temp_value, "Air Temp (°C)", 20, 50, "°C"
             )
-            st.plotly_chart(temp_gauge, use_container_width=True, key="temp_gauge")
+            st.plotly_chart(temp_gauge, use_container_width=True, key="temp_gauge_static")
         
         with col2:
+            rpm_value = st.session_state.current_data.get('Rotational speed [rpm]', 1500)
             rpm_gauge = self.create_live_sensor_gauge(
-                st.session_state.current_data.get('Rotational speed [rpm]', 1500),
-                "Rotation Speed",
-                min_val=1000,
-                max_val=2500,
-                unit="RPM"
+                rpm_value, "Rotation Speed", 1000, 2500, "RPM"
             )
-            st.plotly_chart(rpm_gauge, use_container_width=True, key="rpm_gauge")
+            st.plotly_chart(rpm_gauge, use_container_width=True, key="rpm_gauge_static")
         
         with col3:
+            torque_value = st.session_state.current_data.get('Torque [Nm]', 40)
             torque_gauge = self.create_live_sensor_gauge(
-                st.session_state.current_data.get('Torque [Nm]', 40),
-                "Torque",
-                min_val=10,
-                max_val=80,
-                unit="Nm"
+                torque_value, "Torque", 10, 80, "Nm"
             )
-            st.plotly_chart(torque_gauge, use_container_width=True, key="torque_gauge")
+            st.plotly_chart(torque_gauge, use_container_width=True, key="torque_gauge_static")
 
-    def create_comprehensive_trends(self):
+    def create_comprehensive_trends_optimized(self):
         """Create comprehensive trend charts with smooth updates"""
         if len(st.session_state.history_data) <= 1:
             self.render_placeholder_trends()
             return
         
-        # Convert history to DataFrame for easier plotting
+        # Use a stable container for the chart
+        with st.container():
+            # Only rebuild chart if data has changed significantly
+            current_data_length = len(st.session_state.history_data)
+            
+            # Rebuild chart if we have substantial new data or it's the first render
+            if (not hasattr(st.session_state, 'last_trend_update') or 
+                current_data_length - st.session_state.last_trend_update > 5 or
+                st.session_state.chart_data_version != getattr(st.session_state, 'last_chart_version', 0)):
+                
+                fig = self.build_trend_chart()
+                st.plotly_chart(fig, use_container_width=True, key="trend_charts_static")
+                
+                st.session_state.last_trend_update = current_data_length
+                st.session_state.last_chart_version = st.session_state.chart_data_version
+            
+            # Add summary statistics (these update more frequently)
+            self.render_sensor_statistics()
+
+    def build_trend_chart(self):
+        """Build the trend chart figure (separated for performance)"""
         history_df = pd.DataFrame(st.session_state.history_data)
         
-        # Add calculated metrics if not present
+        # Add calculated metrics
         if 'Power' not in history_df.columns:
             history_df['Power'] = (history_df['Rotational speed [rpm]'] * history_df['Torque [Nm]']) / 9.5488
         if 'Temp_Ratio' not in history_df.columns:
@@ -1149,227 +1185,161 @@ class PredictiveMaintenanceDashboard:
             for j in [1, 2]:
                 fig.update_xaxes(title_text="Time Sequence", row=i, col=j)
         
-        # Use a consistent key for the chart to prevent re-rendering
-        st.plotly_chart(fig, use_container_width=True, key="trend_charts")
-        
-        # Add summary statistics
-        st.markdown("### Sensor Statistics Summary")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            current_temp = history_df['Air Temp (°C)'].iloc[-1] if len(history_df) > 0 else 0
-            max_temp = history_df['Air Temp (°C)'].max() if len(history_df) > 0 else 0
-            st.metric(
-                "Air Temperature", 
-                f"{current_temp:.1f}°C",
-                f"Max: {max_temp:.1f}°C"
-            )
-        
-        with col2:
-            current_rpm = history_df['Rotational speed [rpm]'].iloc[-1] if len(history_df) > 0 else 0
-            max_rpm = history_df['Rotational speed [rpm]'].max() if len(history_df) > 0 else 0
-            st.metric(
-                "Rotational Speed", 
-                f"{current_rpm:.0f} RPM",
-                f"Max: {max_rpm:.0f} RPM"
-            )
-        
-        with col3:
-            current_torque = history_df['Torque [Nm]'].iloc[-1] if len(history_df) > 0 else 0
-            max_torque = history_df['Torque [Nm]'].max() if len(history_df) > 0 else 0
-            st.metric(
-                "Torque", 
-                f"{current_torque:.1f} Nm",
-                f"Max: {max_torque:.1f} Nm"
-            )
-        
-        with col4:
-            current_wear = history_df['Tool wear [min]'].iloc[-1] if len(history_df) > 0 else 0
-            max_wear = history_df['Tool wear [min]'].max() if len(history_df) > 0 else 0
-            st.metric(
-                "Tool Wear", 
-                f"{current_wear:.0f} min",
-                f"Max: {max_wear:.0f} min"
-            )
+        return fig
+
+    def render_sensor_statistics(self):
+        """Render sensor statistics that update more frequently"""
+        if len(st.session_state.history_data) > 0:
+            history_df = pd.DataFrame(st.session_state.history_data)
+            
+            # Add calculated metrics if not present
+            if 'Power' not in history_df.columns:
+                history_df['Power'] = (history_df['Rotational speed [rpm]'] * history_df['Torque [Nm]']) / 9.5488
+            history_df['Air Temp (°C)'] = history_df['Air temperature [K]'] - 273.15
+            
+            st.markdown("### Sensor Statistics Summary")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                current_temp = history_df['Air Temp (°C)'].iloc[-1] if len(history_df) > 0 else 0
+                max_temp = history_df['Air Temp (°C)'].max() if len(history_df) > 0 else 0
+                st.metric(
+                    "Air Temperature", 
+                    f"{current_temp:.1f}°C",
+                    f"Max: {max_temp:.1f}°C"
+                )
+            
+            with col2:
+                current_rpm = history_df['Rotational speed [rpm]'].iloc[-1] if len(history_df) > 0 else 0
+                max_rpm = history_df['Rotational speed [rpm]'].max() if len(history_df) > 0 else 0
+                st.metric(
+                    "Rotational Speed", 
+                    f"{current_rpm:.0f} RPM",
+                    f"Max: {max_rpm:.0f} RPM"
+                )
+            
+            with col3:
+                current_torque = history_df['Torque [Nm]'].iloc[-1] if len(history_df) > 0 else 0
+                max_torque = history_df['Torque [Nm]'].max() if len(history_df) > 0 else 0
+                st.metric(
+                    "Torque", 
+                    f"{current_torque:.1f} Nm",
+                    f"Max: {max_torque:.1f} Nm"
+                )
+            
+            with col4:
+                current_wear = history_df['Tool wear [min]'].iloc[-1] if len(history_df) > 0 else 0
+                max_wear = history_df['Tool wear [min]'].max() if len(history_df) > 0 else 0
+                st.metric(
+                    "Tool Wear", 
+                    f"{current_wear:.0f} min",
+                    f"Max: {max_wear:.0f} min"
+                )
 
     def render_placeholder_trends(self):
         """Show placeholder trend charts when no data is available"""
-        fig = make_subplots(
-            rows=3, cols=2,
-            subplot_titles=(
-                'Temperature Trends (°C)',
-                'Rotational Speed (RPM)',
-                'Torque (Nm)',
-                'Tool Wear (minutes)',
-                'Power Output (W)',
-                'Temperature Ratio'
-            ),
-            vertical_spacing=0.08,
-            horizontal_spacing=0.08
-        )
-        
-        # Add empty traces with instructional text
-        for i in range(1, 4):
-            for j in range(1, 3):
-                fig.add_annotation(
-                    text="Start simulation to see data",
-                    xref=f"x{i}{j}", yref=f"y{i}{j}",
-                    x=0.5, y=0.5, xanchor="center", yanchor="middle",
-                    showarrow=False,
-                    font=dict(size=14, color="gray")
-                )
-        
-        fig.update_layout(height=600, showlegend=False)
-        st.plotly_chart(fig, use_container_width=True, key="placeholder_trends")
-
-    def render_correlation_analysis(self):
-        """Render correlation analysis between sensors"""
-        if len(st.session_state.history_data) > 10:
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.subheader("Sensor Correlation Analysis")
-            
-            history_df = pd.DataFrame(st.session_state.history_data)
-            
-            # Calculate correlations
-            correlation_data = history_df[[
-                'Air temperature [K]', 'Process temperature [K]', 
-                'Rotational speed [rpm]', 'Torque [Nm]', 'Tool wear [min]'
-            ]].corr()
-            
-            # Create correlation heatmap
-            fig = px.imshow(
-                correlation_data,
-                text_auto=True,
-                aspect="auto",
-                color_continuous_scale='RdBu_r',
-                title="Sensor Correlation Matrix"
-            )
-            
-            fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True, key="correlation_chart")
-            
-            # Add correlation insights
-            st.markdown("### Correlation Insights")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                temp_corr = correlation_data.loc['Air temperature [K]', 'Process temperature [K]']
-                st.info(f"**Temperature Correlation**: {temp_corr:.2f}")
-                
-                if temp_corr > 0.7:
-                    st.write("✓ Strong correlation between air and process temperatures")
-                elif temp_corr > 0.3:
-                    st.write("○ Moderate temperature correlation")
-                else:
-                    st.write("✗ Weak temperature relationship")
-            
-            with col2:
-                power_torque_corr = correlation_data.loc['Rotational speed [rpm]', 'Torque [Nm]']
-                st.info(f"**Power Factors Correlation**: {power_torque_corr:.2f}")
-                
-                if abs(power_torque_corr) > 0.5:
-                    st.write("✓ Strong relationship between speed and torque")
-                else:
-                    st.write("○ Independent power factors")
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    def render_historical_trends(self):
-        """Render longer-term historical trends"""
-        if len(st.session_state.history_data) > 20:
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.subheader("Historical Performance Trends")
-            
-            history_df = pd.DataFrame(st.session_state.history_data)
-            
-            # Create performance indicators over time
-            fig = go.Figure()
-            
-            # Add efficiency indicator (inverse of temperature ratio)
-            efficiency = 1 / (history_df['Process temperature [K]'] / history_df['Air temperature [K]'])
-            fig.add_trace(go.Scatter(
-                x=history_df.index,
-                y=efficiency,
-                mode='lines',
-                name='Thermal Efficiency',
-                line=dict(color='#00b894', width=3)
-            ))
-            
-            # Add wear rate (derivative of tool wear)
-            if len(history_df) > 2:
-                wear_rate = history_df['Tool wear [min]'].diff().fillna(0)
-                fig.add_trace(go.Scatter(
-                    x=history_df.index,
-                    y=wear_rate,
-                    mode='lines',
-                    name='Wear Rate (min/cycle)',
-                    line=dict(color='#e17055', width=2),
-                    yaxis='y2'
-                ))
-            
-            fig.update_layout(
-                title="Machine Performance Indicators",
-                yaxis=dict(title="Thermal Efficiency"),
-                yaxis2=dict(
-                    title="Wear Rate (min/cycle)",
-                    overlaying='y',
-                    side='right'
+        with st.container():
+            fig = make_subplots(
+                rows=3, cols=2,
+                subplot_titles=(
+                    'Temperature Trends (°C)',
+                    'Rotational Speed (RPM)',
+                    'Torque (Nm)',
+                    'Tool Wear (minutes)',
+                    'Power Output (W)',
+                    'Temperature Ratio'
                 ),
-                height=400,
-                showlegend=True
+                vertical_spacing=0.08,
+                horizontal_spacing=0.08
             )
             
-            st.plotly_chart(fig, use_container_width=True, key="historical_chart")
+            # Add empty traces with instructional text
+            for i in range(1, 4):
+                for j in range(1, 3):
+                    fig.add_annotation(
+                        text="Start simulation to see data",
+                        xref=f"x{i}{j}", yref=f"y{i}{j}",
+                        x=0.5, y=0.5, xanchor="center", yanchor="middle",
+                        showarrow=False,
+                        font=dict(size=14, color="gray")
+                    )
             
-            # Performance summary
-            st.markdown("### Performance Summary")
-            avg_efficiency = efficiency.mean()
-            avg_wear_rate = wear_rate.mean() if len(history_df) > 2 else 0
+            fig.update_layout(height=600, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True, key="placeholder_trends_static")
+
+    def create_failure_gauge_optimized(self):
+        """Create failure gauge with persistent key"""
+        with st.container():
+            if st.session_state.last_probability_update:
+                st.caption(f"Last updated: {st.session_state.last_probability_update.strftime('%H:%M:%S')}")
             
-            col1, col2, col3 = st.columns(3)
+            failure_gauge = self.create_gauge_chart(
+                st.session_state.failure_prob, 
+                "Failure Probability", 
+                min_val=0, 
+                max_val=100, 
+                threshold=50,
+                unit="%"
+            )
+            st.plotly_chart(failure_gauge, use_container_width=True, key="failure_gauge_static")
             
-            with col1:
-                if avg_efficiency > 0.95:
-                    st.success(f"**Efficiency**: {avg_efficiency:.2f} (Excellent)")
-                elif avg_efficiency > 0.90:
-                    st.warning(f"**Efficiency**: {avg_efficiency:.2f} (Good)")
-                else:
-                    st.error(f"**Efficiency**: {avg_efficiency:.2f} (Poor)")
+            # Status alert
+            if st.session_state.failure_prob > 70:
+                st.markdown('<div class="alert-card">', unsafe_allow_html=True)
+                st.error(f"CRITICAL: High failure risk ({st.session_state.failure_prob:.1f}%)")
+                st.markdown('</div>', unsafe_allow_html=True)
+            elif st.session_state.failure_prob > 50:
+                st.markdown('<div class="alert-card">', unsafe_allow_html=True)
+                st.warning(f"WARNING: Elevated failure risk ({st.session_state.failure_prob:.1f}%)")
+                st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="success-card">', unsafe_allow_html=True)
+                st.success(f"NORMAL: Low failure risk ({st.session_state.failure_prob:.1f}%)")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    def render_explanation_section_optimized(self):
+        """Render failure explanation section"""
+        if not st.session_state.failure_explanations:
+            return
+        
+        with st.container():
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+            st.subheader("Risk Factor Analysis")
             
-            with col2:
-                if avg_wear_rate < 0.5:
-                    st.success(f"**Wear Rate**: {avg_wear_rate:.2f} min/cycle (Low)")
-                elif avg_wear_rate < 1.0:
-                    st.warning(f"**Wear Rate**: {avg_wear_rate:.2f} min/cycle (Normal)")
-                else:
-                    st.error(f"**Wear Rate**: {avg_wear_rate:.2f} min/cycle (High)")
-            
-            with col3:
-                total_cycles = len(history_df)
-                st.info(f"**Total Cycles**: {total_cycles}")
+            for factor, description, severity in st.session_state.failure_explanations:
+                css_class = "critical-item" if severity == "critical" else "warning-item"
+                icon_color = "#F44336" if severity == "critical" else "#FF9800"
+                
+                st.markdown(f'''
+                <div class="{css_class}">
+                    <div style="display: flex; align-items: center; margin-bottom: 0.3rem;">
+                        <span style="font-size: 1.2rem; margin-right: 0.5rem; color: {icon_color}">●</span>
+                        <strong>{factor}</strong>
+                    </div>
+                    <div style="color: rgba(94, 94, 94, 0.9);">{description}</div>
+                </div>
+                ''', unsafe_allow_html=True)
             
             st.markdown('</div>', unsafe_allow_html=True)
 
     def run_dashboard(self):
-       # Header
-        col1, col2, col3 = st.columns([3, 1, 1])
-        with col1:
-            st.title("SmartPredict AI Dashboard")            
-        with col2:
-            st.metric("Data Points", f"{st.session_state.data_points}")
-            
-        with col3:
-            status_text = "RUNNING" if st.session_state.simulation_started else "STOPPED"
-            status_color = "#4CAF50" if st.session_state.simulation_started else "#F44336"
-            st.markdown(
-                f'<div style="display: flex; align-items: center; justify-content: center; padding: 0.5rem; border-radius: 10px; background: {status_color}20; border: 1px solid {status_color}40;">'
-                f'<span class="status-indicator status-running"></span>'
-                f'<strong>{status_text}</strong>'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-        
-            
+        # Header in static container
+        with st.container():
+            col1, col2, col3 = st.columns([3, 1, 1])
+            with col1:
+                st.title("SmartPredict AI Dashboard")            
+            with col2:
+                st.metric("Data Points", f"{st.session_state.data_points}")
+            with col3:
+                status_text = "RUNNING" if st.session_state.simulation_started else "STOPPED"
+                status_color = "#4CAF50" if st.session_state.simulation_started else "#F44336"
+                st.markdown(
+                    f'<div style="display: flex; align-items: center; justify-content: center; padding: 0.5rem; border-radius: 10px; background: {status_color}20; border: 1px solid {status_color}40;">'
+                    f'<span class="status-indicator status-running"></span>'
+                    f'<strong>{status_text}</strong>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
 
         # Data loading section
         self.load_data_section()
@@ -1404,6 +1374,7 @@ class PredictiveMaintenanceDashboard:
                     st.session_state.alert_history = []
                     st.session_state.probability_history = []
                     st.session_state.last_probability_update = None
+                    st.session_state.chart_data_version += 1
                 else:
                     st.sidebar.error("Please load a dataset first")
                 
@@ -1429,106 +1400,57 @@ class PredictiveMaintenanceDashboard:
             col1, col2 = st.columns([2, 1])
             
             with col1:
-                # Sensor gauges and trends
+                # Sensor gauges and trends in containers
                 if st.session_state.current_data is not None:
                     # Sensor gauges with smooth updates
-                    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-                    st.subheader("Live Sensor Readings")
-                    self.create_sensor_gauges()
-                    st.markdown('</div>', unsafe_allow_html=True)
+                    with st.container():
+                        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+                        st.subheader("Live Sensor Readings")
+                        self.create_sensor_gauges_optimized()
+                        st.markdown('</div>', unsafe_allow_html=True)
                     
                     # Comprehensive trends with smooth updates
-                    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-                    st.subheader("Comprehensive Sensor Trends")
-                    self.create_comprehensive_trends()
-                    st.markdown('</div>', unsafe_allow_html=True)
+                    with st.container():
+                        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+                        st.subheader("Comprehensive Sensor Trends")
+                        self.create_comprehensive_trends_optimized()
+                        st.markdown('</div>', unsafe_allow_html=True)
                     
-                    # Add additional analysis sections
-                    if len(st.session_state.history_data) > 10:
-                        self.render_correlation_analysis()
-                        self.render_historical_trends()
-                        
                 else:
                     self.render_stopped_view()
             
             with col2:
-                # Failure probability and explanations
+                # Failure probability and explanations in containers
                 if st.session_state.current_data is not None:
                     # Failure probability with smooth updates
-                    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-                    st.subheader("Failure Risk Assessment")
-                    
-                    # Show last update time
-                    if st.session_state.last_probability_update:
-                        st.caption(f"Last updated: {st.session_state.last_probability_update.strftime('%H:%M:%S')}")
-                    
-                    failure_gauge = self.create_gauge_chart(
-                        st.session_state.failure_prob, 
-                        "Failure Probability", 
-                        min_val=0, 
-                        max_val=100, 
-                        threshold=50,
-                        unit="%"
-                    )
-                    st.plotly_chart(failure_gauge, use_container_width=True, key="failure_gauge")
-                    
-                    if st.session_state.failure_prob > 70:
-                        st.markdown('<div class="alert-card">', unsafe_allow_html=True)
-                        st.error(f"CRITICAL: High failure risk ({st.session_state.failure_prob:.1f}%)")
+                    with st.container():
+                        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+                        st.subheader("Failure Risk Assessment")
+                        self.create_failure_gauge_optimized()
                         st.markdown('</div>', unsafe_allow_html=True)
-                    elif st.session_state.failure_prob > 50:
-                        st.markdown('<div class="alert-card">', unsafe_allow_html=True)
-                        st.warning(f"WARNING: Elevated failure risk ({st.session_state.failure_prob:.1f}%)")
-                        st.markdown('</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown('<div class="success-card">', unsafe_allow_html=True)
-                        st.success(f"NORMAL: Low failure risk ({st.session_state.failure_prob:.1f}%)")
-                        st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    st.markdown('</div>', unsafe_allow_html=True)
                     
                     # Explanations
-                    self.render_explanation_section()
+                    self.render_explanation_section_optimized()
                 
                 # Maintenance section
-                self.render_maintenance_section()
+                self.render_maintenance_section_optimized()
                 
             # Alert history at the bottom
-            self.render_alert_history()
+            self.render_alert_history_optimized()
                 
         else:
             st.info("Please load a dataset from the sidebar to begin monitoring.")
-            
 
         # Update data continuously when simulation is running
         if st.session_state.simulation_started and not st.session_state.simulation_paused:
-            self.update_data()
+            self.update_data_optimized()
             time.sleep(1.0 / st.session_state.get('speed', 3))
-            st.rerun()
-
-    def render_explanation_section(self):
-        """Render failure explanation section"""
-        if not st.session_state.failure_explanations:
-            return
-        
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-        st.subheader("Risk Factor Analysis")
-        
-        for factor, description, severity in st.session_state.failure_explanations:
-            css_class = "critical-item" if severity == "critical" else "warning-item"
-            icon_color = "#F44336" if severity == "critical" else "#FF9800"
             
-            st.markdown(f'''
-            <div class="{css_class}">
-                <div style="display: flex; align-items: center; margin-bottom: 0.3rem;">
-                    <span style="font-size: 1.2rem; margin-right: 0.5rem; color: {icon_color}">●</span>
-                    <strong>{factor}</strong>
-                </div>
-                <div style="color: rgba(94, 94, 94, 0.9);">{description}</div>
-            </div>
-            ''', unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+            # Use optimized rerun
+            try:
+                st.experimental_rerun()
+            except:
+                st.rerun()
 
     def create_gauge_chart(self, value, title, min_val=0, max_val=100, threshold=70, unit=""):
         """Create a beautiful gauge chart"""
@@ -1588,14 +1510,15 @@ class PredictiveMaintenanceDashboard:
 
     def render_stopped_view(self):
         """Render the simulation stopped view"""
-        st.markdown("""
-        <div class="simulation-stopped-container">
-            <h2>Simulation Ready</h2>
-            <p style="font-size: 1.2rem; color: rgba(94,94,94,0.8); margin: 1rem 0;">
-                Click 'Start Simulation' in the sidebar to begin monitoring
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        with st.container():
+            st.markdown("""
+            <div class="simulation-stopped-container">
+                <h2>Simulation Ready</h2>
+                <p style="font-size: 1.2rem; color: rgba(94,94,94,0.8); margin: 1rem 0;">
+                    Click 'Start Simulation' in the sidebar to begin monitoring
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
 
 # Run the dashboard
 if __name__ == "__main__":
