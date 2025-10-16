@@ -7,3 +7,4 @@ plotly>=5.0.0
 prophet==1.1.6
 holidays==0.70
 statsmodels>=0.14.0
+tensorflow>=2.13.0
