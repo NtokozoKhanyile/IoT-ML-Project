@@ -16,8 +16,8 @@ warnings.filterwarnings('ignore')
 
 # Page configuration
 st.set_page_config(
-    page_title="Predictive Maintenance Dashboard",
-    page_icon="🔧",
+    page_title="SmartPredict AI | Predictive Maintenance Dashboard",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -1354,7 +1354,7 @@ class PredictiveMaintenanceDashboard:
        # Header
         col1, col2, col3 = st.columns([3, 1, 1])
         with col1:
-            st.title("Smart Predict Dashboard")            
+            st.title("SmartPredict AI Dashboard")            
         with col2:
             st.metric("Data Points", f"{st.session_state.data_points}")
             
